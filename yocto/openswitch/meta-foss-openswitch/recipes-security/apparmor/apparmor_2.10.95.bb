@@ -18,30 +18,64 @@ SRC_URI[tar.md5sum] = "71a13b9d6ae0bca4f5375984df1a51e7"
 SRC_URI[tar.sha256sum] = "3f659a599718f4a5e2a33140916715f574a5cb3634a6b9ed6d29f7b0617e4d1a"
 
 DEPENDS = "bison flex"
-RDEPENDS_${PN} = "perl bash"
+RDEPENDS_${PN} = "perl bash python ${PN}-python ${PN}-perl"
+RDEPENDS_${PN}-python = "python-terminal python-pydoc"
+RDEPENDS_${PN}-perl = "perl-module-getopt-long"
+RRECOMMENDS_${PN} = "${PN}-profiles"
 
-PACKAGES += "${PN}-python"
+PACKAGES = "${PN}-dbg ${PN}-python ${PN}-perl ${PN}-profiles ${PN} ${PN}-doc \
+  ${PN}-dev ${PN}-staticdev"
+
+FILES_${PN}-dbg += "/usr/lib/python2.7/site-packages/*/.debug"
 FILES_${PN}-python = "/usr/lib/python*"
+FILES_${PN}-perl = "/usr/lib/perl"
+FILES_${PN}-staticdev = "/usr/lib/*.a"
+FILES_${PN}-profiles = "/etc/apparmor.d"
 
 SYSTEMD_SERVICE_${PN} = "apparmor.service"
 
-inherit systemd
+inherit systemd pythonnative cpan-base perlnative
 
 B = "${S}"
 
+# These are needed for --with-python
+export STAGING_INCDIR
+export STAGING_LIBDIR
+export BUILD_SYS
+export HOST_SYS
+
+# These are needed for --with-perl
+# Env var which tells perl if it should use host (no) or target (yes) settings
+export PERLCONFIGTARGET = "${@is_target(d)}"
+
+# Env var which tells perl where the perl include files are
+export PERL_INC = "${STAGING_LIBDIR}${PERL_OWN_DIR}/perl/${@get_perl_version(d)}/CORE"
+export PERL_LIB = "${STAGING_LIBDIR}${PERL_OWN_DIR}/perl/${@get_perl_version(d)}"
+export PERL_ARCHLIB = "${STAGING_LIBDIR}${PERL_OWN_DIR}/perl/${@get_perl_version(d)}"
+export PERLHOSTLIB = "${STAGING_LIBDIR_NATIVE}/perl-native/perl/${@get_perl_version(d)}/"
+
 do_configure() {
   cd libraries/libapparmor/
-  ./configure \
+  # AppArmor's configure refuses to install --with-perl if cross-compiling
+  # for no good reason. Disable that check.
+  sed -i 's/test "$cross_compiling" = yes/false/' ./configure
+
+  PERL="${PERL}" PYTHON="${PYTHON}" ./configure \
       --build=${BUILD_SYS} \
 		  --host=${HOST_SYS} \
 		  --target=${TARGET_SYS} \
+		  --prefix=${prefix} \
 		  --libdir=${libdir} \
 		  --mandir=${mandir} \
-		  --includedir=${includedir}
+		  --includedir=${includedir} \
+      --with-perl --with-python
 }
 
 do_compile() {
-  ${MAKE} -C ${S}/libraries/libapparmor
+  STAGING_INCDIR=${STAGING_INCDIR} \
+  STAGING_LIBDIR=${STAGING_LIBDIR} \
+  BUILD_SYS=${BUILD_SYS} HOST_SYS=${HOST_SYS} \
+  PYTHON="${PYTHON}" ${MAKE} -C ${S}/libraries/libapparmor
   ${MAKE} -C ${S}/parser apparmor_parser manpages
   ${MAKE} -C ${S}/binutils
   ${MAKE} -C ${S}/utils
@@ -58,15 +92,23 @@ do_install() {
   rm -fr ${D}/lib/
   install -d ${D}${systemd_unitdir}/system
   install -m 644 ${WORKDIR}/*.service ${D}${systemd_unitdir}/system
+  install -m 755 ${WORKDIR}/apparmor_*.sh ${D}${bindir}/
 
   #
   # Install profiles
+  # TODO(bluecmd): We will probably want to move these to ops-apparmor-profiles
+  # or something like that. When we inevitably start to modify these it will be
+  # a mess otherwise.
   #
   install -d ${D}/etc/apparmor.d/abstractions
   # Cherry pick profiles we care about
   cd ${S}/profiles/apparmor.d
   cp -Rp abstractions/apparmor_api ${D}/etc/apparmor.d/abstractions
-  for i in authentication base bash consoles openssl \
+
+  # Remove external service includes that we do not need
+  sed -i '/#include/d' abstractions/authentication abstractions/nameservice
+
+  for i in authentication base bash consoles openssl nameservice \
     perl private-files* python ssl_* web-data wutmp
   do
     cp -Rp abstractions/$i ${D}/etc/apparmor.d/abstractions
@@ -77,10 +119,4 @@ do_install() {
   sed -i '/xdg/d' tunables/global
   # Install all other tunables
   cp -Rp tunables ${D}/etc/apparmor.d/
-
-  # TODO(bluecmd): These should be shipped with the relevant packages
-  for i in bin.* sbin.syslog-ng usr.sbin.ntpd usr.sbin.traceroute
-  do
-    cp $i ${D}/etc/apparmor.d/
-  done
 }
