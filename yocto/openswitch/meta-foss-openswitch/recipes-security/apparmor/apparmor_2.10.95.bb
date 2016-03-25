@@ -20,7 +20,8 @@ SRC_URI[tar.sha256sum] = "3f659a599718f4a5e2a33140916715f574a5cb3634a6b9ed6d29f7
 DEPENDS = "bison flex"
 RDEPENDS_${PN} = "perl bash python ${PN}-python ${PN}-perl"
 RDEPENDS_${PN}-python = "python-terminal python-pydoc"
-RDEPENDS_${PN}-perl = "perl-module-getopt-long"
+RDEPENDS_${PN}-perl = "perl-module-getopt-long perl-module-base perl-module-posix \
+  perl-module-file-basename perl-module-time-local"
 RRECOMMENDS_${PN} = "${PN}-profiles"
 
 PACKAGES = "${PN}-dbg ${PN}-python ${PN}-perl ${PN}-profiles ${PN} ${PN}-doc \
